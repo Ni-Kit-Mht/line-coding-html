@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Line Coding Table & Waveform</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  input { width: 300px; padding: 5px; font-size: 16px; }
+  button { padding: 5px 10px; font-size: 16px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 20px; text-align: center; }
+  th, td { border: 1px solid #333; padding: 4px; font-family: monospace; }
+  th { background-color: #eee; }
+  td.signal { font-weight: bold; }
+  td.pos { background-color: #c8e6c9; } /* +1 */
+  td.zero { background-color: #fff; }    /* 0 */
+  td.neg { background-color: #ffcdd2; }  /* -1 */
+  .canvas-container { overflow-x: auto; border: 1px solid #333; margin-top: 20px; }
+  canvas { display: block; }
+  .legend { margin-top: 10px; font-weight: bold; }
+  .legend span { padding: 3px 6px; margin-right: 10px; border:1px solid #333; }
+  .posLabel { background-color:#c8e6c9; }
+  .zeroLabel { background-color:#fff; }
+  .negLabel { background-color:#ffcdd2; }
+</style>
+</head>
+<body>
+
+<h2>Interactive Line Coding Table & Waveform</h2>
+<label>Enter Binary Data (e.g., 10011010): </label>
+<input type="text" id="binaryInput" placeholder="Enter 0s and 1s" value="10011010" />
+<button onclick="generateTable()">Generate Table</button>
+
+<div class="legend">
+  Color-coded: 
+  <span class="posLabel">+1 → green</span>
+  <span class="zeroLabel">0 → white</span>
+  <span class="negLabel">-1 → red</span>
+</div>
+
+<table id="lineCodingTable">
+  <thead>
+    <tr id="headerRow"><th>Scheme</th></tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<div class="canvas-container">
+  <canvas id="waveCanvas" height="400"></canvas>
+</div>
+
+<script>
+// ===== Line Coding Functions =====
+function polarNRZ(data) { return data.map(b=>b===1?1:-1); }
+function polarRZ(data) { return data.flatMap(b=>b===1?[1,0]:[-1,0]); }
+function unipolarRZ(data) { return data.flatMap(b=>b===1?[1,0]:[0,0]); }
+function manchester(data) { return data.flatMap(b=>b===1?[1,-1]:[-1,1]); }
+
+function differentialManchester(data){
+  let output=[], last=-1;
+  data.forEach(bit=>{
+    if(bit===0){ 
+      last=-last; 
+      output.push(last,-last); 
+    }
+    else{ 
+      output.push(last,-last); 
+    }
+    last=output[output.length-1];
+  });
+  return output;
+}
+
+function AMI(data){ 
+  let last=-1; 
+  return data.map(b=>b===0?0:(last=-last)); 
+}
+
+function HDB3(data){
+  let output=[], last=-1, zeroCount=0, onesSinceLastViolation=0;
+  data.forEach(b=>{
+    if(b===1){ 
+      last=-last; 
+      output.push(last); 
+      zeroCount=0; 
+      onesSinceLastViolation++; 
+    }
+    else{
+      zeroCount++;
+      if(zeroCount===4){
+        if(onesSinceLastViolation%2===0){ 
+          output.splice(output.length-3,3,0,0,0); 
+          output.push(last); 
+        }
+        else { 
+          output.splice(output.length-3,3,0,0,0); 
+          output.push(-last); 
+        }
+        zeroCount=0; 
+        onesSinceLastViolation=0;
+      } else {
+        output.push(0);
+      }
+    }
+  });
+  return output;
+}
+
+function B8ZS(data){
+  let output=[], last=-1, zeroCount=0;
+  data.forEach(b=>{
+    if(b===1){ 
+      last=-last; 
+      output.push(last); 
+      zeroCount=0; 
+    }
+    else{
+      zeroCount++; 
+      output.push(0);
+      if(zeroCount===8){
+        output.splice(-8,8,0,0,0,last,-last,0,-last,last); 
+        zeroCount=0;
+      }
+    }
+  });
+  return output;
+}
+
+// ===== Generate Table & Waveform =====
+function generateTable(){
+  const input = document.getElementById("binaryInput").value.trim();
+  if(!/^[01]+$/.test(input)){
+    alert("Please enter a valid binary string (only 0s and 1s).");
+    return;
+  }
+  const binaryData = input.split('').map(Number);
+
+  const schemes = {
+    "Polar NRZ": polarNRZ(binaryData),
+    "Polar RZ": polarRZ(binaryData),
+    "Unipolar RZ": unipolarRZ(binaryData),
+    "Manchester": manchester(binaryData),
+    "Differential Manchester": differentialManchester(binaryData),
+    "AMI": AMI(binaryData),
+    "HDB3": HDB3(binaryData),
+    "B8ZS": B8ZS(binaryData)
+  };
+
+  const maxLen = Math.max(...Object.values(schemes).map(arr=>arr.length));
+
+  buildTable(schemes, maxLen);
+  drawWaveform(schemes, maxLen);
+}
+
+// ===== Build Color-Coded Table =====
+function buildTable(schemes, maxLen){
+  const headerRow = document.getElementById("headerRow");
+  headerRow.innerHTML = "<th>Scheme</th>";
+  for(let i=0;i<maxLen;i++){
+    const th = document.createElement("th");
+    th.innerText = i+1;
+    headerRow.appendChild(th);
+  }
+
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  for(const [schemeName, arr] of Object.entries(schemes)){
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    nameCell.innerText = schemeName;
+    row.appendChild(nameCell);
+
+    for(let i=0;i<maxLen;i++){
+      const td = document.createElement("td");
+      const val = arr[i]!==undefined?arr[i]:"-";
+      td.innerText = val;
+      td.classList.add("signal");
+      if(val===1) td.classList.add("pos");
+      else if(val===0) td.classList.add("zero");
+      else if(val===-1) td.classList.add("neg");
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+}
+
+// ===== Draw Digital Waveform =====
+function drawWaveform(schemes, maxLen){
+  const canvas = document.getElementById("waveCanvas");
+  const ctx = canvas.getContext("2d");
+  const slotWidth = 40;
+  const slotHeight = 40;
+  const topMargin = 30;
+  const leftMargin = 150;
+  const colors = {1:"green", 0:"black", "-1":"red"};
+  const schemesList = Object.keys(schemes);
+
+  canvas.width = maxLen*slotWidth + leftMargin + 50;
+  canvas.height = schemesList.length*slotHeight*2 + topMargin + 200;
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.font = "12px Arial";
+  const verticalGap = 20; // gap between graphs in pixels
+
+  schemesList.forEach((scheme,i)=>{
+    const arr = schemes[scheme];
+    const yBase = topMargin + i * (slotHeight * 2 + verticalGap) + slotHeight; // added verticalGap
+
+    // Scheme label
+    ctx.fillStyle = "black";
+    ctx.textAlign = "left";
+    ctx.fillText(scheme, 5, yBase);
+
+    // Grid lines
+    ctx.strokeStyle = "#ddd";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for(let j=0;j<=arr.length;j++){
+      const x = j*slotWidth + leftMargin;
+      ctx.moveTo(x, yBase - slotHeight);
+      ctx.lineTo(x, yBase + slotHeight);
+    }
+    ctx.stroke();
+
+    // Draw waveform
+    ctx.lineWidth = 3;
+    for(let j=0;j<arr.length;j++){
+      const val = arr[j]!==undefined?arr[j]:0;
+      const xStart = j*slotWidth + leftMargin;
+      const xEnd = (j+1)*slotWidth + leftMargin;
+      const y = yBase - val*slotHeight;
+
+      // Horizontal segment
+      ctx.strokeStyle = colors[val] || "black";
+      ctx.beginPath();
+      ctx.moveTo(xStart, y);
+      ctx.lineTo(xEnd, y);
+      ctx.stroke();
+
+      // Vertical segment to next value
+      if(j<arr.length-1){
+        const nextVal = arr[j+1]!==undefined?arr[j+1]:0;
+        const yNext = yBase - nextVal*slotHeight;
+        ctx.strokeStyle = colors[nextVal] || "black";
+        ctx.beginPath();
+        ctx.moveTo(xEnd, y);
+        ctx.lineTo(xEnd, yNext);
+        ctx.stroke();
+      }
+    }
+  });
+
+  // X-axis time markers
+  ctx.fillStyle = "black";
+  ctx.textAlign = "center";
+  for(let j=0;j<maxLen;j++){
+    const x = j*slotWidth + leftMargin + slotWidth/2;
+    ctx.fillText(j+1, x, topMargin - 10);
+  }
+}
+
+// Generate default on load
+window.onload = generateTable;
+</script>
+
+</body>
+</html>
