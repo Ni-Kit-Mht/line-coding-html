@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enhanced Line Coding Visualization</title>
+<style>
+  body { 
+    font-family: 'Segoe UI', Arial, sans-serif; 
+    margin: 20px; 
+    background: #f5f5f5;
+  }
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  h2 { color: #333; margin-bottom: 20px; }
+  .input-section {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+  }
+  input { 
+    width: 300px; 
+    padding: 8px 12px; 
+    font-size: 16px; 
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+  }
+  input:focus {
+    outline: none;
+    border-color: #4CAF50;
+  }
+  button { 
+    padding: 8px 20px; 
+    font-size: 16px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 10px;
+  }
+  button:hover { background: #45a049; }
+  
+  table { 
+    border-collapse: collapse; 
+    width: 100%; 
+    margin-top: 20px; 
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  th, td { 
+    border: 1px solid #ddd; 
+    padding: 8px; 
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+  }
+  th { 
+    background-color: #333; 
+    color: white;
+    font-weight: 600;
+  }
+  td.scheme-name {
+    background: #f0f0f0;
+    font-weight: bold;
+    text-align: left;
+    padding-left: 12px;
+  }
+  td.signal { font-weight: bold; }
+  td.pos { background-color: #c8e6c9; color: #2e7d32; }
+  td.zero { background-color: #fff; color: #666; }
+  td.neg { background-color: #ffcdd2; color: #c62828; }
+  
+  .canvas-container { 
+    overflow-x: auto; 
+    border: 1px solid #ddd; 
+    margin-top: 30px;
+    background: white;
+    border-radius: 5px;
+  }
+  canvas { display: block; }
+  
+  .legend { 
+    margin: 15px 0; 
+    padding: 12px;
+    background: #f9f9f9;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+  }
+  .legend-title { font-weight: bold; color: #333; }
+  .legend span { 
+    padding: 5px 12px; 
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  .posLabel { background-color: #c8e6c9; color: #2e7d32; }
+  .zeroLabel { background-color: #fff; color: #666; border: 1px solid #999; }
+  .negLabel { background-color: #ffcdd2; color: #c62828; }
+  
+  .info-box {
+    background: #e3f2fd;
+    border-left: 4px solid #2196F3;
+    padding: 12px;
+    margin: 15px 0;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h2>📊 Interactive Line Coding Visualizer</h2>
+  
+  <div class="input-section">
+    <label><strong>Binary Data:</strong> </label>
+    <input type="text" id="binaryInput" placeholder="Enter 0s and 1s" value="10011010" maxlength="32" />
+    <button onclick="generateTable()">Generate</button>
+  </div>
+
+  <div class="info-box">
+    💡 <strong>Tip:</strong> Enter up to 32 bits. RZ schemes show mid-bit transitions. Manchester schemes have transitions at bit boundaries and mid-bit.
+  </div>
+
+  <div class="legend">
+    <span class="legend-title">Signal Levels:</span>
+    <span class="posLabel">+1 (High)</span>
+    <span class="zeroLabel">0 (Zero)</span>
+    <span class="negLabel">-1 (Low)</span>
+  </div>
+
+  <table id="lineCodingTable">
+    <thead>
+      <tr id="headerRow"><th>Scheme</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="canvas-container">
+    <canvas id="waveCanvas" height="600"></canvas>
+  </div>
+</div>
+
+<script>
+// ===== Line Coding Functions =====
+// Each function returns array of signal levels for display
+
+function polarNRZ(data) { 
+  return data.map(b => b === 1 ? 1 : -1); 
+}
+
+function polarRZ(data) { 
+  // RZ: pulse for half bit period, then return to zero
+  return data.flatMap(b => b === 1 ? [1, 0] : [-1, 0]); 
+}
+
+function unipolarRZ(data) { 
+  return data.flatMap(b => b === 1 ? [1, 0] : [0, 0]); 
+}
+
+function manchester(data) { 
+  // Manchester: 1 = high-to-low, 0 = low-to-high
+  return data.flatMap(b => b === 1 ? [1, -1] : [-1, 1]); 
+}
+
+function differentialManchester(data) {
+  // Diff Manchester: transition at start for 0, no transition for 1
+  // Always transition in middle
+  let output = [];
+  let lastLevel = -1; // Start with -1
+  
+  data.forEach(bit => {
+    if (bit === 0) { 
+      // Transition at start (invert)
+      lastLevel = -lastLevel;
+      output.push(lastLevel, -lastLevel);
+    } else { 
+      // No transition at start (maintain)
+      output.push(lastLevel, -lastLevel);
+    }
+    lastLevel = output[output.length - 1];
+  });
+  return output;
+}
+
+function AMI(data) { 
+  // Alternate Mark Inversion: 0 = zero, 1 = alternating +1/-1
+  let lastPulse = -1; 
+  return data.map(b => {
+    if (b === 0) return 0;
+    lastPulse = -lastPulse;
+    return lastPulse;
+  }); 
+}
+
+function HDB3(data) {
+  // High Density Bipolar 3: replaces 4 consecutive zeros
+  let output = [];
+  let lastPulse = -1;
+  let onesCount = 0; // Count of ones (pulses) since last substitution
+  
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] === 1) { 
+      lastPulse = -lastPulse;
+      output.push(lastPulse);
+      onesCount++;
+    } else {
+      // Check for 4 consecutive zeros
+      if (i <= data.length - 4 && 
+          data[i] === 0 && data[i+1] === 0 && 
+          data[i+2] === 0 && data[i+3] === 0) {
+        
+        if (onesCount % 2 === 0) {
+          // Even: B00V (V has same polarity)
+          output.push(lastPulse, 0, 0, lastPulse);
+        } else {
+          // Odd: 000V (V violates)
+          output.push(0, 0, 0, -lastPulse);
+        }
+        i += 3; // Skip next 3 zeros
+        onesCount = 0;
+      } else {
+        output.push(0);
+      }
+    }
+  }
+  return output;
+}
+
+function B8ZS(data) {
+  // Bipolar 8-Zero Substitution
+  let output = [];
+  let lastPulse = -1;
+  
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] === 1) { 
+      lastPulse = -lastPulse;
+      output.push(lastPulse);
+    } else {
+      // Check for 8 consecutive zeros
+      if (i <= data.length - 8 && 
+          data.slice(i, i + 8).every(b => b === 0)) {
+        
+        // 000VB0VB pattern
+        output.push(0, 0, 0, lastPulse, -lastPulse, 0, -lastPulse, lastPulse);
+        i += 7; // Skip next 7 zeros
+      } else {
+        output.push(0);
+      }
+    }
+  }
+  return output;
+}
+
+// ===== Generate Table & Waveform =====
+function generateTable() {
+  const input = document.getElementById("binaryInput").value.trim();
+  if (!/^[01]+$/.test(input)) {
+    alert("⚠️ Please enter a valid binary string (only 0s and 1s).");
+    return;
+  }
+  if (input.length > 32) {
+    alert("⚠️ Please enter maximum 32 bits for better visualization.");
+    return;
+  }
+  
+  const binaryData = input.split('').map(Number);
+
+  const schemes = {
+    "Polar NRZ": polarNRZ(binaryData),
+    "Polar RZ": polarRZ(binaryData),
+    "Unipolar RZ": unipolarRZ(binaryData),
+    "Manchester": manchester(binaryData),
+    "Differential Manchester": differentialManchester(binaryData),
+    "AMI": AMI(binaryData),
+    "HDB3": HDB3(binaryData),
+    "B8ZS": B8ZS(binaryData)
+  };
+
+  const maxLen = Math.max(...Object.values(schemes).map(arr => arr.length));
+
+  buildTable(schemes, maxLen, binaryData);
+  drawWaveform(schemes, maxLen, binaryData);
+}
+
+// ===== Build Table with Original Bits =====
+function buildTable(schemes, maxLen, binaryData) {
+  const headerRow = document.getElementById("headerRow");
+  headerRow.innerHTML = "<th style='width:180px'>Scheme</th>";
+  
+  for (let i = 0; i < maxLen; i++) {
+    const th = document.createElement("th");
+    th.innerText = i + 1;
+    th.style.minWidth = "35px";
+    headerRow.appendChild(th);
+  }
+
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  // Add original binary data row
+  const binaryRow = document.createElement("tr");
+  const binaryLabel = document.createElement("td");
+  binaryLabel.innerText = "Input Bits";
+  binaryLabel.className = "scheme-name";
+  binaryRow.appendChild(binaryLabel);
+  
+  binaryData.forEach(bit => {
+    const td = document.createElement("td");
+    td.innerText = bit;
+    td.style.background = "#e3f2fd";
+    td.style.fontWeight = "bold";
+    td.style.color = "#1565c0";
+    binaryRow.appendChild(td);
+  });
+  tbody.appendChild(binaryRow);
+
+  // Add scheme rows
+  for (const [schemeName, arr] of Object.entries(schemes)) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    nameCell.innerText = schemeName;
+    nameCell.className = "scheme-name";
+    row.appendChild(nameCell);
+
+    for (let i = 0; i < maxLen; i++) {
+      const td = document.createElement("td");
+      const val = arr[i] !== undefined ? arr[i] : "-";
+      td.innerText = val === -1 ? "-1" : val;
+      td.classList.add("signal");
+      
+      if (val === 1) td.classList.add("pos");
+      else if (val === 0) td.classList.add("zero");
+      else if (val === -1) td.classList.add("neg");
+      
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+}
+
+// ===== Draw Accurate Waveforms =====
+function drawWaveform(schemes, maxLen, binaryData) {
+  const canvas = document.getElementById("waveCanvas");
+  const ctx = canvas.getContext("2d");
+  
+  const bitWidth = 60; // Width per original bit
+  const slotHeight = 50; // Height for each signal level unit
+  const topMargin = 60;
+  const leftMargin = 180;
+  const rightMargin = 30;
+  const schemeGap = 100; // Gap between schemes
+  
+  const colors = { 1: "#2e7d32", 0: "#666", "-1": "#c62828" };
+  const schemesList = Object.keys(schemes);
+
+  canvas.width = binaryData.length * bitWidth + leftMargin + rightMargin;
+  canvas.height = schemesList.length * (slotHeight * 2.5 + schemeGap) + topMargin + 50;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = "13px 'Segoe UI', Arial";
+
+  // Draw bit numbers and boundaries at top
+  ctx.fillStyle = "#333";
+  ctx.textAlign = "center";
+  ctx.font = "bold 12px Arial";
+  
+  for (let i = 0; i < binaryData.length; i++) {
+    const x = i * bitWidth + leftMargin + bitWidth / 2;
+    ctx.fillText(`Bit ${i}`, x, 20);
+    ctx.fillText(`(${binaryData[i]})`, x, 35);
+  }
+
+  // Draw each scheme
+  schemesList.forEach((schemeName, schemeIdx) => {
+    const arr = schemes[schemeName];
+    const samplesPerBit = arr.length / binaryData.length;
+    const sampleWidth = bitWidth / samplesPerBit;
+    
+    const yBase = topMargin + schemeIdx * (slotHeight * 2.5 + schemeGap) + slotHeight * 1.5;
+
+    // Scheme label
+    ctx.fillStyle = "#333";
+    ctx.textAlign = "left";
+    ctx.font = "bold 14px 'Segoe UI'";
+    ctx.fillText(schemeName, 10, yBase + 5);
+
+    // Draw baseline (zero line)
+    ctx.strokeStyle = "#999";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(leftMargin, yBase);
+    ctx.lineTo(leftMargin + binaryData.length * bitWidth, yBase);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw amplitude labels
+    ctx.fillStyle = "#666";
+    ctx.textAlign = "right";
+    ctx.font = "11px Arial";
+    ctx.fillText("+1", leftMargin - 10, yBase - slotHeight + 5);
+    ctx.fillText("0", leftMargin - 10, yBase + 5);
+    ctx.fillText("-1", leftMargin - 10, yBase + slotHeight + 5);
+
+    // Draw vertical bit boundaries
+    ctx.strokeStyle = "#ddd";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= binaryData.length; i++) {
+      const x = i * bitWidth + leftMargin;
+      ctx.beginPath();
+      ctx.moveTo(x, yBase - slotHeight * 1.3);
+      ctx.lineTo(x, yBase + slotHeight * 1.3);
+      ctx.stroke();
+    }
+
+    // Draw waveform as continuous path
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    
+    for (let i = 0; i < arr.length; i++) {
+      const val = arr[i] !== undefined ? arr[i] : 0;
+      const xStart = i * sampleWidth + leftMargin;
+      const xEnd = (i + 1) * sampleWidth + leftMargin;
+      const y = yBase - val * slotHeight;
+
+      ctx.strokeStyle = colors[val] || colors[0];
+      
+      // Horizontal segment
+      ctx.beginPath();
+      ctx.moveTo(xStart, y);
+      ctx.lineTo(xEnd, y);
+      ctx.stroke();
+
+      // Vertical transition to next level
+      if (i < arr.length - 1) {
+        const nextVal = arr[i + 1] !== undefined ? arr[i + 1] : 0;
+        const yNext = yBase - nextVal * slotHeight;
+        
+        if (y !== yNext) {
+          ctx.strokeStyle = colors[nextVal] || colors[0];
+          ctx.beginPath();
+          ctx.moveTo(xEnd, y);
+          ctx.lineTo(xEnd, yNext);
+          ctx.stroke();
+        }
+      }
+    }
+  });
+}
+
+// Generate on load
+window.onload = generateTable;
+</script>
+
+</body>
+</html>
